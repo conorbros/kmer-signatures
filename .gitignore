@@ -362,5 +362,6 @@ MigrationBackup/
 FodyWeavers.xsd
 
 *.vcxproj
+*.fasta.part16_sigs03_64
 *.fasta
 *.vcxproj.filters
