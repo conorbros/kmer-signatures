@@ -3,7 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <chrono>
-#include "uthash.h"
+#include "uthash.hpp"
 
 typedef unsigned char byte;
 
@@ -18,7 +18,7 @@ const char* alphabet = "CSTPAGNDEQHRKMILVFYW";
 
 void seed_random(char* term, int length);
 short random_num(short max);
-void Init();
+int compare_files(const char* filename1, const char* filename2);
 
 int doc_sig[SIGNATURE_LEN];
 
@@ -134,8 +134,10 @@ int power(int n, int e)
 
 int main(int argc, char* argv[])
 {
-    const char* filename = "qut2.fasta";
-    //const char* filename = "qut3.fasta";
+    //const char* filename = "qut2.fasta";
+    //const char* test_file = "test_qut2.fasta.part16_sigs03_64";
+    const char* filename = "qut3.fasta";
+    const char* test_file = "test_qut3.fasta.part16_sigs03_64";
 
     WORDLEN = 3;
     PARTITION_SIZE = 16;
@@ -177,5 +179,44 @@ int main(int argc, char* argv[])
 
     printf("%s %f seconds\n", filename, duration.count());
 
+    if (compare_files(outfile, test_file) != 0) {
+        fprintf(stderr, "Error: output file does not match test file\n");
+        return 1;
+    }
+    else {
+        printf("Output file matches test file\n");
+    }
+
     return 0;
+}
+
+int compare_files(const char *filename1, const char *filename2) {
+
+    FILE* file1, *file2;
+
+    fopen_s(&file1, filename1, "r");
+    fopen_s(&file2, filename2, "r");
+
+    unsigned long pos;
+    int c1, c2;
+    for (pos = 0;; pos++) {
+        c1 = getc(file1);
+        c2 = getc(file2);
+        if (c1 != c2 || c1 == EOF)
+            break;
+    }
+    if (c1 == c2) {
+        return 0;  // files are identical
+    }
+    else
+        if (c1 == EOF) {
+            return 1;
+        }
+        else
+            if (c2 == EOF) {
+                return 2;
+            }
+            else {
+                return 3;
+            }
 }
