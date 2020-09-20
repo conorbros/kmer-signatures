@@ -1,10 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ppl.h>
 #include <math.h>
 #include <chrono>
+#include <windows.h>
 #include "uthash.hpp"
 
+using namespace concurrency;
 typedef unsigned char byte;
 
 #define SIGNATURE_LEN 64
@@ -95,8 +98,9 @@ void compute_signature(char* sequence, int length)
 {
     memset(doc_sig, 0, sizeof(doc_sig));
 
-    for (int i = 0; i < length - WORDLEN + 1; i++)
+    for (int i = 0; i < length - WORDLEN + 1; i++) {
         signature_add(sequence + i);
+    }
 
     // save document number to sig file
     fwrite(&doc, sizeof(int), 1, sig_file);
