@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vector>
 #include <math.h>
 #include <chrono>
 #include "uthash.hpp"
@@ -91,37 +92,48 @@ void signature_add(char* term)
 
 int doc = 0;
 
-void compute_signature(char* sequence, int length)
+void compute_signature(char* sequence, int length, std::vector<byte>& sigs, int n)
 {
     memset(doc_sig, 0, sizeof(doc_sig));
 
     for (int i = 0; i < length - WORDLEN + 1; i++)
         signature_add(sequence + i);
 
-    // save document number to sig file
-    fwrite(&doc, sizeof(int), 1, sig_file);
-
     // flatten and output to sig file
     for (int i = 0; i < SIGNATURE_LEN; i += 8)
     {
         byte c = 0;
-        for (int j = 0; j < 8; j++)
+        sigs[n] = 0;
+        for (int j = 0; j < 8; j++) {
             c |= (doc_sig[i + j] > 0) << (7 - j);
-        fwrite(&c, sizeof(byte), 1, sig_file);
+            sigs[n] |= (doc_sig[i + j] > 0) << (7 - j);
+        }
+        n++;
     }
 }
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
 
-void partition(char* sequence, int length)
+int partition(char* sequence, int length, std::vector<byte>& sigs)
 {
+    int size = ((length - 1) / (PARTITION_SIZE / 2)) * SIGNATURE_LEN / 8;
+    //size = size + (size / 8);
+    sigs.resize(size);
+
+    //int estimated = size / 8;
+    //int count = 0;
+
+    int si = 0;
     int i = 0;
     do
     {
-        compute_signature(sequence + i, min(PARTITION_SIZE, length - i));
+        compute_signature(sequence + i, min(PARTITION_SIZE, length - i), sigs, si);
         i += PARTITION_SIZE / 2;
+        si += (SIGNATURE_LEN/8);
+        //count++;
     } while (i + PARTITION_SIZE / 2 < length);
-    doc++;
+    //printf("estimated: %d count: %d \n", estimated, count);
+    return size;
 }
 
 int power(int n, int e)
@@ -161,6 +173,9 @@ int main(int argc, char* argv[])
     sprintf_s(outfile, 256, "%s.part%d_sigs%02d_%d", filename, PARTITION_SIZE, WORDLEN, SIGNATURE_LEN);
     fopen_s(&sig_file, outfile, "w");
 
+
+    std::vector<byte> sigs;
+
     char buffer[10000];
     while (!feof(file))
     {
@@ -168,7 +183,17 @@ int main(int argc, char* argv[])
         fgets(buffer, 10000, file);
         int n = (int)strlen(buffer) - 1;
         buffer[n] = 0;
-        partition(buffer, n);
+
+        int size = partition(buffer, n, sigs);
+
+        for (int i = 0; i < size;i++) {
+            if (i % 8 == 0) {
+                fwrite(&doc, sizeof(int), 1, sig_file);   
+            }
+            fwrite(&sigs[i], sizeof(byte), 1, sig_file);
+        }
+        doc++;
+        sigs.clear();
     }
     fclose(file);
 
@@ -206,17 +231,21 @@ int compare_files(const char *filename1, const char *filename2) {
             break;
     }
     if (c1 == c2) {
+        //printf("files are identical and have %lu bytes\n", pos);
         return 0;  // files are identical
     }
     else
         if (c1 == EOF) {
+            printf("file1 is included in file2, the first %lu bytes are identical\n", pos);
             return 1;
         }
         else
             if (c2 == EOF) {
+                printf("file2 is included in file1, the first %lu bytes are identical\n", pos);
                 return 2;
             }
             else {
+                printf("file1 and file2 differ at position %lu: %u <>%u\n", pos, c1, c2);
                 return 3;
             }
 }
