@@ -3,12 +3,18 @@
 #include <string.h>
 #include <vector>
 #include <math.h>
+#include <unordered_map>
+#include <ppl.h>
 #include <chrono>
+#include <array>
 #include "uthash.hpp"
+#include "ISAAC-rand.hpp"
 
 typedef unsigned char byte;
 
 #define SIGNATURE_LEN 64
+
+#define THREADS 14
 
 int DENSITY = 21;
 int PARTITION_SIZE;
@@ -16,15 +22,18 @@ int PARTITION_SIZE;
 int inverse[256];
 const char* alphabet = "CSTPAGNDEQHRKMILVFYW";
 
+concurrency::reader_writer_lock* rw_lock;
 
-void seed_random(char* term, int length);
-short random_num(short max);
 int compare_files(const char* filename1, const char* filename2);
-
-int doc_sig[SIGNATURE_LEN];
 
 int WORDLEN;
 FILE* sig_file;
+
+byte** sigs;
+
+char buffer[THREADS][10000];
+int lengths[THREADS];
+int sizes[THREADS];
 
 typedef struct
 {
@@ -33,19 +42,27 @@ typedef struct
     UT_hash_handle hh;
 } hash_term;
 
+
+
 hash_term* vocab = NULL;
+typedef std::array<short, SIGNATURE_LEN> computed_sig;
+
+typedef std::unordered_map<char*, computed_sig> computed_sig_map;
+
+thread_local computed_sig_map sig_map;
 
 
-short* compute_new_term_sig(char* term, short* term_sig)
+
+computed_sig compute_new_term_sig(char* term, computed_sig &term_sig)
 {
-    seed_random(term, WORDLEN);
+    randctx* R = seed_random(term, WORDLEN);
 
     int non_zero = SIGNATURE_LEN * DENSITY / 100;
 
     int positive = 0;
     while (positive < non_zero / 2)
     {
-        short pos = random_num(SIGNATURE_LEN);
+        short pos = random_num(SIGNATURE_LEN, R);
         if (term_sig[pos] == 0)
         {
             term_sig[pos] = 1;
@@ -56,57 +73,84 @@ short* compute_new_term_sig(char* term, short* term_sig)
     int negative = 0;
     while (negative < non_zero / 2)
     {
-        short pos = random_num(SIGNATURE_LEN);
+        short pos = random_num(SIGNATURE_LEN, R);
         if (term_sig[pos] == 0)
         {
             term_sig[pos] = -1;
             negative++;
         }
     }
+    free(R);
     return term_sig;
 }
 
-short* find_sig(char* term)
+computed_sig find_sig(char* term)
 {
-    hash_term* entry;
-    HASH_FIND(hh, vocab, term, WORDLEN, entry);
+    computed_sig ret;
+    hash_term* entry = NULL;
+    //rw_lock->lock_read();
+    //HASH_FIND(hh, vocab, term, WORDLEN, entry);
+
+    auto item = sig_map.find(term);
+    if (item != sig_map.end())
+        return item->second;
+        //ret = item->second;
+        //return item->second;
+
     if (entry == NULL)
     {
-        entry = (hash_term*)malloc(sizeof(hash_term));
-        strncpy_s(entry->term, sizeof(entry->term), term, WORDLEN);
-        memset(entry->sig, 0, sizeof(entry->sig));
-        compute_new_term_sig(term, entry->sig);
-        HASH_ADD(hh, vocab, term, WORDLEN, entry);
+        //rw_lock->unlock();
+
+        //entry = (hash_term*)malloc(sizeof(hash_term));
+        //
+        //strncpy_s(entry->term, sizeof(entry->term), term, WORDLEN);
+        //memset(entry->sig, 0, sizeof(entry->sig));
+        computed_sig new_sig = computed_sig();
+        compute_new_term_sig(term, new_sig);
+
+        //rw_lock->lock();
+        hash_term* check;
+
+        //HASH_FIND(hh, vocab, term, WORDLEN, check);
+        //if (check == NULL) {
+        //    HASH_ADD(hh, vocab, term, WORDLEN, entry);
+        //}
+        auto new_item = sig_map.insert({ term, new_sig });
+        ret = new_item.first->second;
     }
 
-    return entry->sig;
+    //rw_lock->unlock();
+
+    return ret;
 }
 
-
-void signature_add(char* term)
+void signature_add(char* term, int doc_sig[])
 {
-    short* term_sig = find_sig(term);
+    computed_sig term_sig = find_sig(term);
     for (int i = 0; i < SIGNATURE_LEN; i++)
+    {
         doc_sig[i] += term_sig[i];
+    }
 }
 
 int doc = 0;
 
-void compute_signature(char* sequence, int length, std::vector<byte>& sigs, int n)
+void compute_signature(char* sequence, int length, int x, int n)
 {
+    int doc_sig[SIGNATURE_LEN];
     memset(doc_sig, 0, sizeof(doc_sig));
 
     for (int i = 0; i < length - WORDLEN + 1; i++)
-        signature_add(sequence + i);
+    {
+        signature_add(sequence + i, doc_sig);
+    }
 
     // flatten and output to sig file
     for (int i = 0; i < SIGNATURE_LEN; i += 8)
     {
-        byte c = 0;
-        sigs[n] = 0;
+        sigs[x][n] = 0;
         for (int j = 0; j < 8; j++) {
-            c |= (doc_sig[i + j] > 0) << (7 - j);
-            sigs[n] |= (doc_sig[i + j] > 0) << (7 - j);
+            sigs[x][n] |= (doc_sig[i + j] > 0) << (7 - j);
         }
         n++;
     }
@@ -114,25 +158,21 @@ void compute_signature(char* sequence, int length, std::vector<byte>& sigs, int 
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
 
-int partition(char* sequence, int length, std::vector<byte>& sigs)
+//int partition(char* sequence, int length,int x)
+int partition(int x)
 {
-    int size = ((length - 1) / (PARTITION_SIZE / 2)) * SIGNATURE_LEN / 8;
-    //size = size + (size / 8);
-    sigs.resize(size);
-
-    //int estimated = size / 8;
-    //int count = 0;
+    int size = ((lengths[x] - 1) / (PARTITION_SIZE / 2)) * SIGNATURE_LEN / 8;
+    //sigs.resize(size);
+    sigs[x] = (byte*)calloc(size, sizeof(byte));
 
     int si = 0;
     int i = 0;
     do
     {
-        compute_signature(sequence + i, min(PARTITION_SIZE, length - i), sigs, si);
+        compute_signature(buffer[x] + i, min(PARTITION_SIZE, lengths[x] - i), x, si);
         i += PARTITION_SIZE / 2;
         si += (SIGNATURE_LEN/8);
-        //count++;
-    } while (i + PARTITION_SIZE / 2 < length);
-    //printf("estimated: %d count: %d \n", estimated, count);
+    } while (i + PARTITION_SIZE / 2 < lengths[x]);
     return size;
 }
 
@@ -146,10 +186,12 @@ int power(int n, int e)
 
 int main(int argc, char* argv[])
 {
-    //const char* filename = "qut2.fasta";
-    //const char* test_file = "test_qut2.fasta.part16_sigs03_64";
-    const char* filename = "qut3.fasta";
-    const char* test_file = "test_qut3.fasta.part16_sigs03_64";
+    const char* filename = "qut2.fasta";
+    const char* test_file = "test_release_qut2.fasta.part16_sigs03_64";
+    //const char* filename = "qut3.fasta";
+    //const char* test_file = "test_qut3.fasta.part16_sigs03_64";
+
+    rw_lock = new concurrency::reader_writer_lock();
 
     WORDLEN = 3;
     PARTITION_SIZE = 16;
@@ -173,30 +215,38 @@ int main(int argc, char* argv[])
     sprintf_s(outfile, 256, "%s.part%d_sigs%02d_%d", filename, PARTITION_SIZE, WORDLEN, SIGNATURE_LEN);
     fopen_s(&sig_file, outfile, "w");
 
+    sigs = (byte**)malloc(sizeof(byte*) * THREADS);
 
-    std::vector<byte> sigs;
-
-    char buffer[10000];
     while (!feof(file))
     {
-        fgets(buffer, 10000, file); // skip meta data line
-        fgets(buffer, 10000, file);
-        int n = (int)strlen(buffer) - 1;
-        buffer[n] = 0;
-
-        int size = partition(buffer, n, sigs);
-
-        for (int i = 0; i < size;i++) {
-            if (i % 8 == 0) {
-                fwrite(&doc, sizeof(int), 1, sig_file);   
-            }
-            fwrite(&sigs[i], sizeof(byte), 1, sig_file);
+        int j = 0;
+        while (j < THREADS && !feof(file)) {
+            fgets(buffer[j], 10000, file); // skip meta data line
+            fgets(buffer[j], 10000, file);
+            int n = (int)strlen(buffer[j]) - 1;
+            lengths[j] = n;
+            buffer[j][n] = 0;
+            j++;
         }
-        doc++;
-        sigs.clear();
+
+        concurrency::parallel_for(int(0), j, [&](int i) {
+            sizes[i] = partition(i);
+        }, concurrency::static_partitioner());
+
+        for (int i = 0; i < j; i++) {
+            for (int j = 0; j < sizes[i];j++) {
+
+                if (j % 8 == 0) {
+                    fwrite(&doc, sizeof(int), 1, sig_file);
+                }
+                fwrite(&sigs[i][j], sizeof(byte), 1, sig_file);
+            }
+            doc++;
+            //sigs[i].clear();
+            free(sigs[i]);
+        }
     }
     fclose(file);
-
     fclose(sig_file);
 
     auto end = std::chrono::high_resolution_clock::now();
