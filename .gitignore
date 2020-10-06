@@ -361,6 +361,8 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 
+VTune Profiler Results/
+
 *.vcxproj
 *.fasta.part16_sigs03_64
 *.fasta
