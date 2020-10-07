@@ -16,7 +16,7 @@ typedef unsigned char byte;
 
 #define SIGNATURE_LEN 64
 
-#define THREADS 8
+#define CHUNKS 2000
 
 int DENSITY = 21;
 int PARTITION_SIZE;
@@ -29,9 +29,9 @@ FILE* sig_file;
 
 byte** sigs;
 
-char buffer[THREADS][10000];
-int lengths[THREADS];
-int sizes[THREADS];
+char buffer[CHUNKS][10000];
+int lengths[CHUNKS];
+int sizes[CHUNKS];
 
 typedef std::array<short, SIGNATURE_LEN> computed_sig;
 
@@ -148,8 +148,11 @@ int power(int n, int e)
     return p;
 }
 
-int main(int argc, char* argv[])
-{
+
+double kmer_signatures(int threads) {
+    concurrency::Scheduler* qsScheduler = concurrency::Scheduler::Create(concurrency::SchedulerPolicy(2, concurrency::MinConcurrency, 1, concurrency::MaxConcurrency, threads));
+    qsScheduler->Attach();
+
     const char* filename = "qut2.fasta";
     const char* test_file = "test_release_qut2.fasta.part16_sigs03_64";
     //const char* filename = "qut3.fasta";
@@ -170,7 +173,7 @@ int main(int argc, char* argv[])
     if (OK != 0)
     {
         fprintf(stderr, "Error: failed to open file %s\n", filename);
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
     char outfile[256];
@@ -180,17 +183,15 @@ int main(int argc, char* argv[])
     if (OK != 0)
     {
         fprintf(stderr, "Error: failed to open sig file\n");
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
-    sigs = (byte**)malloc(sizeof(byte*) * THREADS);
-    
-    //setvbuf(sig_file, NULL, _IOFBF, 16000);
+    sigs = (byte**)malloc(sizeof(byte*) * CHUNKS);
 
     while (!feof(file))
     {
         int work = 0;
-        while (work < THREADS && !feof(file)) {
+        while (work < CHUNKS && !feof(file)) {
             fgets(buffer[work], 10000, file); // skip meta data line
             fgets(buffer[work], 10000, file);
             int n = (int)strlen(buffer[work]) - 1;
@@ -201,10 +202,9 @@ int main(int argc, char* argv[])
 
         concurrency::parallel_for(int(0), work, [&](int i) {
             partition(i);
-        }, concurrency::static_partitioner());
+            }, concurrency::static_partitioner());
 
         for (int i = 0; i < work; i++) {
-
             for (int j = 0; j < sizes[i];j+=8) {
                 fwrite(&doc, sizeof(int), 1, sig_file);
                 fwrite(&sigs[i][j], sizeof(byte), 8, sig_file);
@@ -216,18 +216,54 @@ int main(int argc, char* argv[])
     fclose(file);
     fclose(sig_file);
 
+    concurrency::CurrentScheduler::Detach();
+
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end - start;
-
-    printf("%s %f seconds\n", filename, duration.count());
-
+    
     if (compare_files(outfile, test_file) != 0) {
-        fprintf(stderr, "Error: output file does not match test file\n");
-        return 1;
-    }
-    else {
-        printf("Output file matches test file\n");
-    }
+      fprintf(stderr, "Error: output file does not match test file\n");
+      return 1;
+  }
+  else {
+      printf("Output file matches test file\n");
+  }
+    return duration.count();
+}
+
+int main(int argc, char* argv[])
+{
+
+    printf("%f seconds \n", kmer_signatures(7));
+
+    //for (int T = 1; T <= 8; T++) {
+    //    double durations[4];
+
+    //    for (int i = 0; i < 4; i++) {
+    //        durations[i] = kmer_signatures(T);
+    //    }
+
+    //    std::sort(durations, durations+4);
+
+    //    double median = durations[2];
+
+    //    double total = 0.0;
+    //    for (int i = 0; i < 4; i++) {
+    //        total += durations[i];
+    //    }
+
+    //    printf("%d threads - average: %f median: %f\n", T, total / (double)4, median);
+    //}
+
+    
+
+    //if (compare_files(outfile, test_file) != 0) {
+    //    fprintf(stderr, "Error: output file does not match test file\n");
+    //    return 1;
+    //}
+    //else {
+    //    printf("Output file matches test file\n");
+    //}
 
     return 0;
 }
