@@ -134,10 +134,10 @@ int power(int n, int e)
 
 int main(int argc, char* argv[])
 {
-    //const char* filename = "qut2.fasta";
-    //const char* test_file = "test_qut2.fasta.part16_sigs03_64";
-    const char* filename = "qut3.fasta";
-    const char* test_file = "test_qut3.fasta.part16_sigs03_64";
+    const char* filename = "qut2.fasta";
+    const char* test_file = "test_release_qut2.fasta.part16_sigs03_64";
+    //const char* filename = "qut3.fasta";
+    //const char* test_file = "test_qut3.fasta.part16_sigs03_64";
 
     WORDLEN = 3;
     PARTITION_SIZE = 16;
