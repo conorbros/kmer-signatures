@@ -73,9 +73,9 @@ void find_sig(char* term, short* term_sigs, int row, int m)
 {
 	hash_term* entry;
 
-	rw_lock->lock_read();
+	//rw_lock->lock_read();
 	HASH_FIND(hh, vocab, term, WORDLEN, entry);
-	rw_lock->unlock();
+	//rw_lock->unlock();
 	if (entry == NULL)
 	{
 		entry = (hash_term*)malloc(sizeof(hash_term));
@@ -92,7 +92,6 @@ void find_sig(char* term, short* term_sigs, int row, int m)
 		term_sigs[row * m + j] = entry->sig[x];
 		x++;
 	}
-
 }
 
 void compute_signature(char* sequence, int length, int* doc_sigs, int row)
@@ -101,9 +100,13 @@ void compute_signature(char* sequence, int length, int* doc_sigs, int row)
 	int m = SIGNATURE_LEN;
 	short* term_sigs = (short*)calloc((n * m), sizeof(short));
 
-	for (int i = 0;i < length - WORDLEN + 1; i++) {
+	//for (int i = 0;i < length - WORDLEN + 1; i++) {
+	//	find_sig(sequence + i, term_sigs, i, m);
+	//};
+
+	parallel_for(int(0), length - WORDLEN + 1, [&](int i) {
 		find_sig(sequence + i, term_sigs, i, m);
-	};
+		});
 
 	for (int i = 0; i < length - WORDLEN + 1; i++) {
 		for (int j = 0; j < SIGNATURE_LEN; j++) {
@@ -126,7 +129,7 @@ void partition(char* sequence, int length)
 		int increment = i * (PARTITION_SIZE / 2);
 		compute_signature(sequence + increment, min(PARTITION_SIZE, length - increment), doc_sigs, i);
 		row++;
-	});
+	}, static_partitioner());
 	//}
 
 	for (int i = 0; i * (PARTITION_SIZE / 2) + PARTITION_SIZE / 2 < length; i++) {
@@ -160,14 +163,14 @@ int power(int n, int e)
 
 int main(int argc, char* argv[])
 {
-	//const char* filename = "qut2.fasta";
-	//const char* test_file = "test_qut2.fasta.part16_sigs03_64";
-	const char* filename = "qut3.fasta";
+	const char* filename = "qut2.fasta";
+	const char* test_file = "test_qut2.fasta.part16_sigs03_64";
+	//const char* filename = "qut3.fasta";
 
 #if _DEBUG
-	const char* test_file = "test_qut3.fasta.part16_sigs03_64";
+	//const char* test_file = "test_qut3.fasta.part16_sigs03_64";
 #else
-	const char* test_file = "test_release_qut3.fasta.part16_sigs03_64";
+	//const char* test_file = "test_release_qut3.fasta.part16_sigs03_64";
 #endif // _DEBUG
 
 	WORDLEN = 3;
